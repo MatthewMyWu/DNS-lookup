@@ -175,7 +175,10 @@ public class DNSLookupService {
      */
     protected DNSMessage buildQuery(DNSQuestion question) {
         /* TO BE COMPLETED BY THE STUDENT */
-        return null;
+        short id = (short) random.nextInt();
+        DNSMessage ret = new DNSMessage(id);
+        ret.addQuestion(question);
+        return ret;
     }
 
     /**
@@ -191,9 +194,22 @@ public class DNSLookupService {
      * nameservers, returns an empty set.
      */
     protected Set<ResourceRecord> processResponse(DNSMessage response) {
+        int QDCount = response.getQDCount(), ANCount = response.getANCount(), NSCount = response.getNSCount(), ARCount = response.getARCount();
+        Set<ResourceRecord> ret = new HashSet<>();
+
+        for (int i = 0; i < QDCount; i++) {
+            response.getQuestion();
+        }
+        for (int i = 0; i < ANCount + NSCount + ARCount; i++) {
+            ResourceRecord rr = response.getRR();
+            ret.add(rr);
+            cache.addResult(rr);
+        }
+
         /* TO BE COMPLETED BY THE STUDENT */
-        return null;
+        return ret;
     }
+
     /**
      * Helper function that converts a hex string representation of a byte array. May be used to represent the result of
      * records that are returned by the nameserver but not supported by the application (e.g., SOA records).

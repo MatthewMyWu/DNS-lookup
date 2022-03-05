@@ -408,7 +408,6 @@ public class DNSMessage {
                 addName(rr.getTextResult());
                 buffer.put(rdLengthPos, (byte) (buffer.position() - rdLengthPos));
         }
-        setARCount(getARCount() + 1);
     }
 
     /**
