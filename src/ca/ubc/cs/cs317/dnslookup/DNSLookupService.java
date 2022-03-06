@@ -1,6 +1,8 @@
 package ca.ubc.cs.cs317.dnslookup;
 
+import javax.xml.crypto.Data;
 import java.io.IOException;
+import java.math.BigInteger;
 import java.net.*;
 import java.nio.ByteBuffer;
 import java.security.SecureRandom;
@@ -138,7 +140,7 @@ public class DNSLookupService {
      * @param server   Address of the server to be used for the first query.
      */
     public void iterativeQuery(DNSQuestion question, InetAddress server) {
-
+        individualQueryProcess(question, server);
         /* TO BE COMPLETED BY THE STUDENT */
     }
 
@@ -160,6 +162,31 @@ public class DNSLookupService {
      */
     protected Set<ResourceRecord> individualQueryProcess(DNSQuestion question, InetAddress server) {
         /* TO BE COMPLETED BY THE STUDENT */
+        // Creating datagram to send
+        DNSMessage query = buildQuery(question);
+        DatagramPacket datagramOut = new DatagramPacket(query.getUsed(), query.getUsed().length, server, 3001);
+
+        try {
+            socket.send(datagramOut);
+            byte[] in = new byte[512];
+            DatagramPacket datagramIn = new DatagramPacket(in, in.length);
+            socket.receive(datagramIn);
+            System.out.println(new String(datagramIn.getData(), 0, datagramIn.getLength()));
+        } catch (Exception e) {
+            System.out.println(e.getStackTrace());
+        }
+
+        for (int i = 0; i < MAX_QUERY_ATTEMPTS; i++){
+            try {
+                byte[] in = new byte[512];
+                DatagramPacket datagramIn = new DatagramPacket(in, in.length);
+                socket.receive(datagramIn);
+                System.out.println(new String(datagramIn.getData(), 0, datagramIn.getLength()));
+            } catch (Exception e) {
+                System.out.println(e.getStackTrace());
+            }
+        }
+
         return null;
     }
 
@@ -195,6 +222,9 @@ public class DNSLookupService {
      */
     protected Set<ResourceRecord> processResponse(DNSMessage response) {
         int QDCount = response.getQDCount(), ANCount = response.getANCount(), NSCount = response.getNSCount(), ARCount = response.getARCount();
+        verbose.printResponseHeaderInfo(response.getID(), response.getAA(), response.getRcode());
+        verbose.printAnswersHeader(ANCount);
+        verbose.printAdditionalInfoHeader(ARCount);
         Set<ResourceRecord> ret = new HashSet<>();
 
         for (int i = 0; i < QDCount; i++) {
@@ -202,7 +232,19 @@ public class DNSLookupService {
         }
         for (int i = 0; i < ANCount + NSCount + ARCount; i++) {
             ResourceRecord rr = response.getRR();
-            ret.add(rr);
+            switch (rr.getRecordType()) {
+                case NS:
+                    verbose.printNameserversHeader(NSCount);
+                    ret.add(rr);
+                case A:
+                case AAAA:
+                case CNAME:
+                case MX:
+                    break;
+                default:
+                    rr = new ResourceRecord(rr.getQuestion(), (int) rr.getRemainingTTL(), byteArrayToHexString(rr.getTextResult().getBytes()));
+            }
+            verbose.printIndividualResourceRecord(rr, rr.getRecordType().getCode(), rr.getRecordType().getCode());
             cache.addResult(rr);
         }
 
