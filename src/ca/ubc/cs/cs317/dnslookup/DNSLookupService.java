@@ -1,12 +1,10 @@
 package ca.ubc.cs.cs317.dnslookup;
 
-import javax.xml.crypto.Data;
-import java.io.IOException;
-import java.math.BigInteger;
 import java.net.*;
-import java.nio.ByteBuffer;
 import java.security.SecureRandom;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Consumer;
 import java.util.stream.IntStream;
 
 public class DNSLookupService {
@@ -140,8 +138,36 @@ public class DNSLookupService {
      * @param server   Address of the server to be used for the first query.
      */
     public void iterativeQuery(DNSQuestion question, InetAddress server) {
-        individualQueryProcess(question, server);
-        /* TO BE COMPLETED BY THE STUDENT */
+        Set<ResourceRecord> nameServers = individualQueryProcess(question, server), temp;
+        while(true) {
+            if (nameServers.isEmpty()) break;
+            ResourceRecord rr = (ResourceRecord) nameServers.toArray()[0];
+            nameServers.remove(rr);
+            try {
+                setNameServer(rr.getTextResult());
+            } catch (UnknownHostException e) {
+                try {
+                    setNameServer("root");
+                } catch (UnknownHostException ex) {
+                    ex.printStackTrace();
+                }
+            }
+            temp = individualQueryProcess(question, nameServer);
+            if (!temp.isEmpty()) {
+                nameServers = temp;
+            }
+            List<ResourceRecord> cacheResults = cache.getCachedResults(question, false);
+
+            if (!cacheResults.isEmpty()) {
+                break;
+            }
+        }
+
+        try {
+            setNameServer("root");
+        } catch (UnknownHostException ex) {
+            ex.printStackTrace();
+        }
     }
 
     /**
@@ -161,33 +187,35 @@ public class DNSLookupService {
      * set.
      */
     protected Set<ResourceRecord> individualQueryProcess(DNSQuestion question, InetAddress server) {
-        /* TO BE COMPLETED BY THE STUDENT */
-        // Creating datagram to send
+        socket.connect(server, DEFAULT_DNS_PORT);
         DNSMessage query = buildQuery(question);
-        DatagramPacket datagramOut = new DatagramPacket(query.getUsed(), query.getUsed().length, server, 3001);
+        DatagramPacket datagramOut = new DatagramPacket(query.getUsed(), query.getUsed().length, server, DEFAULT_DNS_PORT);
 
+        // Sending datagram
         try {
+            verbose.printQueryToSend(question, server, query.getID());
             socket.send(datagramOut);
-            byte[] in = new byte[512];
-            DatagramPacket datagramIn = new DatagramPacket(in, in.length);
-            socket.receive(datagramIn);
-            System.out.println(new String(datagramIn.getData(), 0, datagramIn.getLength()));
         } catch (Exception e) {
-            System.out.println(e.getStackTrace());
+            System.out.println("Sending datagram error:" + e.getMessage());
         }
 
+        // Receiving datagram
         for (int i = 0; i < MAX_QUERY_ATTEMPTS; i++){
             try {
-                byte[] in = new byte[512];
+                byte[] in = new byte[DNSMessage.MAX_DNS_MESSAGE_LENGTH];
                 DatagramPacket datagramIn = new DatagramPacket(in, in.length);
                 socket.receive(datagramIn);
-                System.out.println(new String(datagramIn.getData(), 0, datagramIn.getLength()));
+                DNSMessage response = new DNSMessage(in, datagramIn.getLength());
+                if (response.getID() == query.getID()) {
+                    return processResponse(response);
+                }
             } catch (Exception e) {
-                System.out.println(e.getStackTrace());
+                System.out.println("Receiving datagram error: " + e.getMessage());
             }
         }
 
-        return null;
+        // Case where no result received, return empty set
+        return new HashSet<>();
     }
 
     /**
@@ -222,28 +250,28 @@ public class DNSLookupService {
      */
     protected Set<ResourceRecord> processResponse(DNSMessage response) {
         int QDCount = response.getQDCount(), ANCount = response.getANCount(), NSCount = response.getNSCount(), ARCount = response.getARCount();
-        verbose.printResponseHeaderInfo(response.getID(), response.getAA(), response.getRcode());
-        verbose.printAnswersHeader(ANCount);
-        verbose.printAdditionalInfoHeader(ARCount);
         Set<ResourceRecord> ret = new HashSet<>();
+        verbose.printResponseHeaderInfo(response.getID(), response.getAA(), response.getRcode());
 
         for (int i = 0; i < QDCount; i++) {
             response.getQuestion();
         }
-        for (int i = 0; i < ANCount + NSCount + ARCount; i++) {
+        verbose.printAnswersHeader(ANCount);
+        for (int i = 0; i < ANCount; i++) {
             ResourceRecord rr = response.getRR();
-            switch (rr.getRecordType()) {
-                case NS:
-                    verbose.printNameserversHeader(NSCount);
-                    ret.add(rr);
-                case A:
-                case AAAA:
-                case CNAME:
-                case MX:
-                    break;
-                default:
-                    rr = new ResourceRecord(rr.getQuestion(), (int) rr.getRemainingTTL(), byteArrayToHexString(rr.getTextResult().getBytes()));
-            }
+            verbose.printIndividualResourceRecord(rr, rr.getRecordType().getCode(), rr.getRecordType().getCode());
+            cache.addResult(rr);
+        }
+        verbose.printNameserversHeader(NSCount);
+        for (int i = 0; i < NSCount; i++) {
+            ResourceRecord rr = response.getRR();
+            verbose.printIndividualResourceRecord(rr, rr.getRecordType().getCode(), rr.getRecordType().getCode());
+            cache.addResult(rr);
+            ret.add(rr);
+        }
+        verbose.printAdditionalInfoHeader(ARCount);
+        for (int i = 0; i < ARCount; i++) {
+            ResourceRecord rr = response.getRR();
             verbose.printIndividualResourceRecord(rr, rr.getRecordType().getCode(), rr.getRecordType().getCode());
             cache.addResult(rr);
         }
